@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -13,16 +14,56 @@ import (
 	_ "go.uber.org/automaxprocs"
 )
 
+// {
+// 	"saldo": {
+// 	  "total": -9098,
+// 	  "data_extrato": "2024-01-17T02:34:41.217753Z",
+// 	  "limite": 100000
+// 	},
+// 	"ultimas_transacoes": [
+// 	  {
+// 		"valor": 10,
+// 		"tipo": "c",
+// 		"descricao": "descricao",
+// 		"realizada_em": "2024-01-17T02:34:38.543030Z"
+// 	  },
+// 	  {
+// 		"valor": 90000,
+// 		"tipo": "d",
+// 		"descricao": "descricao",
+// 		"realizada_em": "2024-01-17T02:34:38.543030Z"
+// 	  }
+// 	]
+//   }
+
 type Transaction struct {
 	Type        string `json:"tipo" binding:"required"`
 	Description string `json:"descricao" binding:"required"`
-	Amount      int64  `json:"valor" binding:"required"`
+	Amount      int    `json:"valor" binding:"required"`
+}
+
+type StatementDetails struct {
+	CreatedAt   time.Time `json:"realizada_em" db:"created_at"`
+	Type        string    `json:"tipo" db:"type"`
+	Description string    `json:"descricao" db:"description"`
+	Value       int       `json:"valor" db:"value"`
+}
+
+type BalanceDetails struct {
+	Date  time.Time `json:"data_extrato"`
+	Total int       `json:"total"`
+	Limit int       `json:"limite"`
+}
+
+type Statement struct {
+	Statements []StatementDetails `json:"ultimas_transacoes"`
+	Balance    BalanceDetails     `json:"saldo"`
 }
 
 type User struct {
-	Id      int64 `json:"-" db:"id"`
-	Limit   int64 `json:"limite" db:"limit"`
-	Balance int64 `json:"total" db:"balance"`
+	Id      int `json:"-" db:"id"`
+	Limit   int `json:"limite" db:"limit"`
+	Balance int `json:"total" db:"balance"`
 }
 
 func main() {
@@ -35,11 +76,8 @@ func main() {
 
 	router := gin.Default()
 
-	router.GET("/ping", func(ctx *gin.Context) {
-		ctx.JSON(http.StatusOK, gin.H{"message": "pong"})
-	})
-
 	router.POST("/clientes/:id/transacoes", transactionHandler(pool))
+	router.GET("/clientes/:id/extrato", statementHandler(pool))
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -48,6 +86,103 @@ func main() {
 
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func statementHandler(pool *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		id := c.Param("id")
+
+		if id == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing user id"})
+			return
+		}
+
+		// Get a conn from pool
+		conn, err := pool.Acquire(ctx)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		defer conn.Release()
+
+		tx, err := conn.Begin(ctx)
+
+		if err != nil {
+			tx.Rollback(ctx)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		rows, err := tx.Query(ctx, `SELECT u.id, u."limit", u.balance FROM users u WHERE u.id = $1;`, id)
+
+		if err != nil {
+			tx.Rollback(ctx)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		user, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[User])
+
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				tx.Rollback(ctx)
+				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+				return
+			}
+
+			tx.Rollback(ctx)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Get transactions from user
+
+		rows, err = tx.Query(ctx, `SELECT t.value, t.type, t.description, t.created_at FROM transactions t WHERE t.user_id = $1 ORDER BY t.created_at DESC LIMIT 10;`, user.Id)
+
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				tx.Rollback(ctx)
+				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+				return
+			}
+
+			tx.Rollback(ctx)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		transactions, err := pgx.CollectRows(rows, pgx.RowToStructByName[StatementDetails])
+
+		if err != nil {
+			tx.Rollback(ctx)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		tx.Commit(ctx)
+
+		var statements []StatementDetails
+
+		if transactions == nil || len(transactions) == 0 {
+			statements = []StatementDetails{}
+		} else {
+			statements = transactions
+		}
+
+		c.JSON(http.StatusOK, Statement{
+			Balance: BalanceDetails{
+				Total: user.Balance,
+				Date:  time.Now(),
+				Limit: user.Limit,
+			},
+			Statements: statements,
+		})
+
 	}
 }
 
@@ -109,7 +244,7 @@ func transactionHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		user, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByPos[User])
+		user, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[User])
 
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -125,7 +260,7 @@ func transactionHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 
 		// Process transaction
 
-		var balance int64
+		var balance int
 
 		switch transaction.Type {
 		case "c":
