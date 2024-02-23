@@ -63,9 +63,6 @@ services:
         <<: *api01
         container_name: api02
         hostname: api02
-        environment:
-            GIN_MODE: "release"
-            DNS: "user=user password=123 host=postgres port=5432 dbname=rinha sslmode=disable pool_max_conns=200"
         ports:
             - "8082:8080"
 
