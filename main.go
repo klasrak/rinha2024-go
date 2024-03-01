@@ -14,32 +14,10 @@ import (
 	_ "go.uber.org/automaxprocs"
 )
 
-// {
-// 	"saldo": {
-// 	  "total": -9098,
-// 	  "data_extrato": "2024-01-17T02:34:41.217753Z",
-// 	  "limite": 100000
-// 	},
-// 	"ultimas_transacoes": [
-// 	  {
-// 		"valor": 10,
-// 		"tipo": "c",
-// 		"descricao": "descricao",
-// 		"realizada_em": "2024-01-17T02:34:38.543030Z"
-// 	  },
-// 	  {
-// 		"valor": 90000,
-// 		"tipo": "d",
-// 		"descricao": "descricao",
-// 		"realizada_em": "2024-01-17T02:34:38.543030Z"
-// 	  }
-// 	]
-//   }
-
 type Transaction struct {
-	Type        string `json:"tipo" binding:"required"`
-	Description string `json:"descricao" binding:"required"`
-	Amount      int    `json:"valor" binding:"required"`
+	Type        string `json:"tipo"`
+	Description string `json:"descricao"`
+	Amount      int    `json:"valor"`
 }
 
 type StatementDetails struct {
@@ -74,7 +52,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
 
 	router.POST("/clientes/:id/transacoes", transactionHandler(pool))
 	router.GET("/clientes/:id/extrato", statementHandler(pool))
@@ -96,7 +75,7 @@ func statementHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 		id := c.Param("id")
 
 		if id == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing user id"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "missing user id"})
 			return
 		}
 
@@ -166,21 +145,13 @@ func statementHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 
 		tx.Commit(ctx)
 
-		var statements []StatementDetails
-
-		if transactions == nil || len(transactions) == 0 {
-			statements = []StatementDetails{}
-		} else {
-			statements = transactions
-		}
-
 		c.JSON(http.StatusOK, Statement{
 			Balance: BalanceDetails{
 				Total: user.Balance,
 				Date:  time.Now(),
 				Limit: user.Limit,
 			},
-			Statements: statements,
+			Statements: transactions,
 		})
 
 	}
@@ -193,7 +164,7 @@ func transactionHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 		id := c.Param("id")
 
 		if id == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing user id"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "missing user id"})
 			return
 		}
 
@@ -202,17 +173,17 @@ func transactionHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 		err := c.Bind(&transaction)
 
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid payload"})
 			return
 		}
 
 		if transaction.Type != "d" && transaction.Type != "c" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid transaction type"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid transaction type"})
 			return
 		}
 
 		if len(transaction.Description) > 10 || len(transaction.Description) < 1 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid transaction description"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid transaction description"})
 			return
 		}
 

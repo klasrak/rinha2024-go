@@ -3,11 +3,11 @@
 -- DB Type: oltp
 -- Total Memory (RAM): 400 MB
 -- CPUs num: 1
--- Connections num: 200
+-- Connections num: 400
 -- Data Storage: ssd
 
 ALTER SYSTEM SET
- max_connections = '200';
+ max_connections = '400';
 ALTER SYSTEM SET
  shared_buffers = '100MB';
 ALTER SYSTEM SET
@@ -25,7 +25,7 @@ ALTER SYSTEM SET
 ALTER SYSTEM SET
  effective_io_concurrency = '200';
 ALTER SYSTEM SET
- work_mem = '256kB';
+ work_mem = '128kB';
 ALTER SYSTEM SET
  huge_pages = 'off';
 ALTER SYSTEM SET

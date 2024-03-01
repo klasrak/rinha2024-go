@@ -18,7 +18,7 @@ services:
         deploy:
             resources:
                 limits:
-                    cpus: "1"
+                    cpus: "0.8"
                     memory: "400MB"
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -37,8 +37,6 @@ services:
         build:
             context: .
             target: final
-        volumes:
-            - ./scripts/wait-for-it.sh:/scripts/wait-for-it.sh
         networks:
             - default
         image: api01
@@ -48,7 +46,7 @@ services:
             resources:
                 limits:
                     cpus: "0.2"
-                    memory: "65MB"
+                    memory: "50MB"
         ulimits:
             nproc: 1000000
             nofile:
@@ -78,8 +76,8 @@ services:
         deploy:
             resources:
                 limits:
-                    cpus: "0.1"
-                    memory: "20MB"
+                    cpus: "0.3"
+                    memory: "50MB"
         networks:
             - default
 
